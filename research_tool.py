@@ -1,4 +1,4 @@
-# research_tool.py v2.0
+# research_tool.py v2.1
 # A fully featured Research & Knowledge Assistant for Termux
 #
 # ███████╗ █████╗ ██╗███████╗ █████╗ ███╗   ██╗     ██╗   ██╗██████╗ ██╗  ██╗
@@ -56,7 +56,7 @@ BRANDING_FOOTER = "--- Join my WhatsApp Channel: https://whatsapp.com/channel/00
 # --- 🎨 UI & Helper Functions ---
 def print_header():
     header_panel = Panel(
-        "[bold cyan]Research & Knowledge Assistant v2.0[/bold cyan]\n[dim]All outputs are saved in your 'Faizan AI Tool' folder.[/dim]",
+        "[bold cyan]Research & Knowledge Assistant v2.1[/bold cyan]\n[dim]All outputs are saved in your 'Faizan AI Tool' folder.[/dim]",
         title="[bold magenta]Tool by FAIZAN AHMAD KHICHI[/bold magenta]", border_style="magenta"
     )
     console.print(header_panel)
@@ -75,7 +75,7 @@ def clear_screen():
 def get_safe_filename(prompt_text):
     """Creates a safe, short filename from a prompt."""
     text = re.sub(r'[^\w\s-]', '', prompt_text).strip().lower()
-    return re.sub(r'[-\s]+', '_', text)[:40]
+    return re.sub(r'[-\s]+', '_', text)[:40] # Limit length for file systems
 
 # --- 🌐 Core API & Network Functions ---
 def call_api(payload: dict, spinner_text: str = "Contacting AI..."):
@@ -103,29 +103,60 @@ def run_research_mode():
     console.print(Panel("Enter a topic to research (e.g., 'Quantum Computing').", title="[bold green]📚 Research Mode[/bold green]"))
     topic = Prompt.ask("[bold]Topic[/bold]")
     wiki_summary, ddg_answer = "", ""
+    
     with console.status("[bold green]Gathering information...[/bold green]", spinner="earth"):
+        wikipedia.set_lang("en")
+        
+        # --- Wikipedia Search (Improved Precision) ---
         try:
-            wikipedia.set_lang("en")
-            wiki_summary = wikipedia.summary(topic, sentences=5, auto_suggest=True, redirect=True)
+            # 1. Try for an exact match (auto_suggest=False, redirect=False)
+            wiki_summary = wikipedia.summary(topic, sentences=5, auto_suggest=False, redirect=False)
+        except wikipedia.exceptions.PageError:
+            # 2. If no exact page, try a broader search for page titles
+            search_results = wikipedia.search(topic, results=1)
+            if search_results:
+                try:
+                    # Summarize the top search result
+                    found_page_title = search_results[0]
+                    wiki_summary = wikipedia.summary(found_page_title, sentences=5, auto_suggest=False, redirect=False)
+                    wiki_summary = f"[b]Found Wikipedia page for '{topic}':[/b] [italic]{found_page_title}[/italic]\n\n{wiki_summary}"
+                except Exception as e:
+                    wiki_summary = f"[red]Could not summarize Wikipedia page '{found_page_title}'.[/red] Error: {e}"
+            else:
+                wiki_summary = f"[red]No direct Wikipedia page or relevant search results found for '{topic}'.[/red]"
+        except wikipedia.exceptions.DisambiguationError as e:
+            wiki_summary = f"[yellow]'{topic}' is ambiguous on Wikipedia.[/yellow] Possible options include: {', '.join(e.options[:3])}. Please be more specific."
+        except requests.exceptions.Timeout:
+            wiki_summary = "[red]Wikipedia API timed out.[/red] Please try again."
         except Exception as e:
-            wiki_summary = f"Could not fetch from Wikipedia. Error: {e}"
+            wiki_summary = f"[red]An unexpected error occurred with Wikipedia:[/red] {e}"
+
+        # --- DuckDuckGo Quick Answer ---
         try:
             ddg_url = f"https://api.duckduckgo.com/?q={topic}&format=json"
             data = requests.get(ddg_url, timeout=10).json()
             ddg_answer = data.get("AbstractText") or "No quick answer found on DuckDuckGo."
+        except requests.exceptions.Timeout:
+            ddg_answer = "[red]DuckDuckGo API timed out.[/red] Please try again."
         except Exception as e:
-            ddg_answer = f"Failed to fetch from DuckDuckGo. Error: {e}"
+            ddg_answer = f"[red]Failed to fetch from DuckDuckGo:[/red] {e}"
 
-    prompt = f"Summarize and analyze the following research:\n\nWikipedia: {wiki_summary}\n\nDuckDuckGo: {ddg_answer}"
-    payload = {"mode": "chat", "provider": "openai-gpt4o", "prompt": prompt}
+    # --- AI Summary & Analysis ---
+    ai_prompt_content = f"Wikipedia: {wiki_summary}\n\nDuckDuckGo: {ddg_answer}"
+    prompt_for_ai = f"You are a research analyst. Summarize and provide a brief analysis of the following information. Focus on the key points, potential implications, and any interesting connections. If some sources indicate no direct information, acknowledge that and base your analysis on what is available.\n\n---\n{ai_prompt_content}\n---"
+    
+    payload = {"mode": "chat", "provider": "openai-gpt4o", "prompt": prompt_for_ai}
     api_response = call_api(payload, spinner_text="AI is analyzing the research...")
     
     ai_summary = "AI analysis failed."
     if api_response and api_response.get("success"):
         ai_summary = api_response.get("data", {}).get("response", ai_summary)
+    else:
+        ai_summary = "[red]AI analysis could not be generated due to an API error.[/red]"
+
 
     console.rule(f"[bold]Research Results for: {topic}[/bold]")
-    console.print(Panel(wiki_summary, title="📚 Wikipedia", border_style="green"))
+    console.print(Panel(Markdown(wiki_summary), title="📚 Wikipedia", border_style="green"))
     console.print(Panel(ddg_answer, title="🌐 DuckDuckGo", border_style="cyan"))
     console.print(Panel(Markdown(ai_summary), title="🤖 AI Summary & Analysis", border_style="magenta"))
 
@@ -173,9 +204,15 @@ def run_code_mode():
 
     if response and response.get("success"):
         code = response.get("data", {}).get("response", "# Code generation failed.").strip()
+        # Attempt to strip markdown code blocks
         if code.startswith("```") and code.endswith("```"):
-            code = '\n'.join(code.split('\n')[1:-1])
-
+            code_lines = code.split('\n')
+            # Check if the first line also has a language specifier (e.g., ```python)
+            if len(code_lines) > 1 and code_lines[0].strip().lower().startswith('```'):
+                code = '\n'.join(code_lines[1:-1])
+            else:
+                code = '\n'.join(code_lines[1:-1]) # Regular case
+        
         console.print(Panel(Syntax(code, "python", theme="monokai", line_numbers=True), title="Generated Code"))
 
         if Confirm.ask("\n[bold]Do you want to save this code?[/bold]"):
