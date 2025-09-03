@@ -1,4 +1,4 @@
-# research_tool.py
+# research_tool.py v2.0
 # A fully featured Research & Knowledge Assistant for Termux
 #
 # ███████╗ █████╗ ██╗███████╗ █████╗ ███╗   ██╗     ██╗   ██╗██████╗ ██╗  ██╗
@@ -15,7 +15,7 @@ import sys
 import json
 import requests
 import wikipedia
-import base64
+import re
 from datetime import datetime
 from rich.console import Console
 from rich.panel import Panel
@@ -32,193 +32,197 @@ HEADERS = {
 }
 
 # --- 📂 File & Directory Management ---
+BASE_STORAGE_DIR = os.path.join(os.getenv("HOME"), "storage", "shared", "Faizan AI Tool")
+NOTES_DIR = os.path.join(BASE_STORAGE_DIR, "Research Notes")
+CODE_DIR = os.path.join(BASE_STORAGE_DIR, "Generated Code")
+IMAGE_DIR = os.path.join(BASE_STORAGE_DIR, "Generated Images")
+AUDIO_DIR = os.path.join(BASE_STORAGE_DIR, "Generated Audio")
+CHAT_DIR = os.path.join(BASE_STORAGE_DIR, "AI Chats")
+
 def setup_environment():
-    """Checks for Termux, sets up working directory in shared storage."""
-    base_dir = os.getenv("HOME")
-    if 'com.termux' in base_dir:
-        # We are in Termux, let's move to a user-accessible directory
-        storage_dir = os.path.join(base_dir, "storage", "shared", "FaizanResearchTool")
-        if not os.path.exists(storage_dir):
-            try:
-                os.makedirs(storage_dir)
-            except OSError as e:
-                console.print(f"[bold red]Error:[/bold red] Could not create directory in shared storage.")
-                console.print(f"Please run [bold]'termux-setup-storage'[/bold] and grant permission.")
-                sys.exit(1)
-        os.chdir(storage_dir)
-        return True
-    return False
+    """Creates all necessary directories in shared storage."""
+    try:
+        for path in [BASE_STORAGE_DIR, NOTES_DIR, CODE_DIR, IMAGE_DIR, AUDIO_DIR, CHAT_DIR]:
+            os.makedirs(path, exist_ok=True)
+    except OSError:
+        console.print("[bold red]Error:[/bold red] Could not create directories in shared storage.")
+        console.print("Please run [bold]'termux-setup-storage'[/bold], grant permission, and restart the script.")
+        sys.exit(1)
 
 console = Console()
-IS_TERMUX = setup_environment()
-
-
-# --- 📦 Global Variables & Setup ---
-NOTES_FILE = "research_notes.txt"
-CODE_DIR = "generated_code"
-IMAGE_FILE = os.path.join(os.getenv("HOME"), "storage/shared/generated_image.png") # Absolute path
-AUDIO_FILE = os.path.join(os.getenv("HOME"), "storage/shared/generated_audio.mp3") # Absolute path
 BRANDING_HEADER = "--- Tool by FAIZAN AHMAD KHICHI ---"
 BRANDING_FOOTER = "--- Join my WhatsApp Channel: https://whatsapp.com/channel/0029Vb2y2umF6sn16F6Zm20k ---"
 
-
-# --- 🎨 UI Helper Functions ---
+# --- 🎨 UI & Helper Functions ---
 def print_header():
-    """Prints the main header of the tool."""
     header_panel = Panel(
-        "[bold cyan]Research & Knowledge Assistant[/bold cyan]\n[dim]A powerful AI tool for your terminal[/dim]",
-        title="[bold magenta]Tool by FAIZAN AHMAD KHICHI[/bold magenta]",
-        border_style="magenta"
+        "[bold cyan]Research & Knowledge Assistant v2.0[/bold cyan]\n[dim]All outputs are saved in your 'Faizan AI Tool' folder.[/dim]",
+        title="[bold magenta]Tool by FAIZAN AHMAD KHICHI[/bold magenta]", border_style="magenta"
     )
     console.print(header_panel)
 
 def print_footer():
-    """Prints the branding footer."""
     console.print(f"\n[dim cyan]🔹 {BRANDING_HEADER} 🔹[/dim cyan]")
     console.print(f"[dim yellow]🔹 Join for Updates: https://whatsapp.com/channel/0029Vb2y2umF6sn16F6Zm20k 🔹[/dim yellow]")
 
-
 def print_menu():
-    """Displays the main menu options."""
-    menu_text = """
-1. [bold green]📚 Research Topic[/bold green]
-2. [bold cyan]💬 AI Chat[/bold cyan]
-3. [bold yellow]💻 Code Generation[/bold yellow]
-4. [bold blue]🎨 Image Generation[/bold blue]
-5. [bold red]🔊 Text-to-Voice[/bold red]
-6. [bold]🚪 Exit[/bold]
-    """
+    menu_text = "1. [bold green]📚 Research Topic[/bold green]\n2. [bold cyan]💬 AI Chat[/bold cyan]\n3. [bold yellow]💻 Code Generation[/bold yellow]\n4. [bold blue]🎨 Image Generation[/bold blue]\n5. [bold red]🔊 Text-to-Voice[/bold red]\n6. [bold]🚪 Exit[/bold]"
     console.print(Panel(menu_text, title="[bold]Main Menu[/bold]", border_style="bold blue"))
 
 def clear_screen():
-    """Clears the terminal screen."""
     os.system('cls' if os.name == 'nt' else 'clear')
 
+def get_safe_filename(prompt_text):
+    """Creates a safe, short filename from a prompt."""
+    text = re.sub(r'[^\w\s-]', '', prompt_text).strip().lower()
+    return re.sub(r'[-\s]+', '_', text)[:40]
 
 # --- 🌐 Core API & Network Functions ---
 def call_api(payload: dict, spinner_text: str = "Contacting AI..."):
-    """
-    Handles all POST requests to the API with a rich status animation.
-    """
     try:
-        with console.status(f"[bold green]{spinner_text}[/bold green]", spinner="dots8Bit") as status:
+        with console.status(f"[bold green]{spinner_text}[/bold green]", spinner="dots8Bit"):
             response = requests.post(API_URL, headers=HEADERS, json=payload, timeout=240)
             response.raise_for_status()
-
             content_type = response.headers.get("Content-Type", "")
-            status.update("[bold green]Processing response...[/bold green]")
             if "application/json" in content_type:
                 return response.json()
-            elif "audio/" in content_type or "image/" in content_type:
+            elif "audio/" in content_type:
                 return response.content
-            else:
-                console.print(f"[bold red]Error: Unexpected content type received: {content_type}[/bold red]")
-                return None
-
+            else: # Fallback for unexpected types
+                return response.text
     except requests.exceptions.Timeout:
-        console.print(Panel("[bold red]API Error:[/bold red] The request timed out. The server might be busy. Please try again later.", title="[bold red]Timeout[/bold red]"))
+        console.print(Panel("[bold red]API Error:[/bold red] The request timed out. Please try again.", title="[bold red]Timeout[/bold red]"))
         return None
     except requests.exceptions.RequestException as e:
-        console.print(Panel(f"[bold red]Network Error:[/bold red] Could not connect to the API.\nDetails: {e}", title="[bold red]Error[/bold red]"))
+        console.print(Panel(f"[bold red]Network Error:[/bold red] Could not connect.\nDetails: {e}", title="[bold red]Error[/bold red]"))
         return None
-
 
 # --- 📝 Feature Implementations ---
 
 def run_research_mode():
-    """Handles the entire research workflow."""
     console.print(Panel("Enter a topic to research (e.g., 'Quantum Computing').", title="[bold green]📚 Research Mode[/bold green]"))
     topic = Prompt.ask("[bold]Topic[/bold]")
-
     wiki_summary, ddg_answer = "", ""
     with console.status("[bold green]Gathering information...[/bold green]", spinner="earth"):
         try:
+            wikipedia.set_lang("en")
             wiki_summary = wikipedia.summary(topic, sentences=5, auto_suggest=True, redirect=True)
-        except Exception:
-            wiki_summary = f"Could not find a clear Wikipedia page for '{topic}'."
+        except Exception as e:
+            wiki_summary = f"Could not fetch from Wikipedia. Error: {e}"
         try:
             ddg_url = f"https://api.duckduckgo.com/?q={topic}&format=json"
-            data = requests.get(ddg_url).json()
-            ddg_answer = data.get("AbstractText", "No quick answer found.")
-            if not ddg_answer: ddg_answer = "No quick answer found on DuckDuckGo."
-        except Exception:
-            ddg_answer = "Failed to fetch from DuckDuckGo."
+            data = requests.get(ddg_url, timeout=10).json()
+            ddg_answer = data.get("AbstractText") or "No quick answer found on DuckDuckGo."
+        except Exception as e:
+            ddg_answer = f"Failed to fetch from DuckDuckGo. Error: {e}"
 
-    if wiki_summary or ddg_answer:
-        prompt = f"Summarize and analyze the following research:\n\nWikipedia: {wiki_summary}\n\nDuckDuckGo: {ddg_answer}"
-        payload = {"mode": "chat", "provider": "openai-gpt4o", "prompt": prompt}
-        api_response = call_api(payload, spinner_text="AI is analyzing the research...")
-        ai_summary = api_response.get("response", "AI analysis failed.") if api_response else "API call failed."
+    prompt = f"Summarize and analyze the following research:\n\nWikipedia: {wiki_summary}\n\nDuckDuckGo: {ddg_answer}"
+    payload = {"mode": "chat", "provider": "openai-gpt4o", "prompt": prompt}
+    api_response = call_api(payload, spinner_text="AI is analyzing the research...")
+    
+    ai_summary = "AI analysis failed."
+    if api_response and api_response.get("success"):
+        ai_summary = api_response.get("data", {}).get("response", ai_summary)
 
-        console.rule(f"[bold]Research Results for: {topic}[/bold]")
-        console.print(Panel(wiki_summary, title="📚 Wikipedia", border_style="green"))
-        console.print(Panel(ddg_answer, title="🌐 DuckDuckGo", border_style="cyan"))
-        console.print(Panel(Markdown(ai_summary), title="🤖 AI Summary & Analysis", border_style="magenta"))
+    console.rule(f"[bold]Research Results for: {topic}[/bold]")
+    console.print(Panel(wiki_summary, title="📚 Wikipedia", border_style="green"))
+    console.print(Panel(ddg_answer, title="🌐 DuckDuckGo", border_style="cyan"))
+    console.print(Panel(Markdown(ai_summary), title="🤖 AI Summary & Analysis", border_style="magenta"))
 
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(NOTES_FILE, "a", encoding="utf-8") as f:
-            f.write(f"\n\n{'='*50}\n{BRANDING_HEADER}\nResearch Topic: {topic} (at {timestamp})\n{'='*50}\n\n")
-            f.write(f"--- 📚 Wikipedia ---\n{wiki_summary}\n\n--- 🌐 DuckDuckGo ---\n{ddg_answer}\n\n--- 🤖 AI Summary & Analysis ---\n{ai_summary}\n\n{BRANDING_FOOTER}\n")
-        console.print(f"\n[bold green]✔ Results appended to [underline]{os.path.abspath(NOTES_FILE)}[/underline][/bold green]")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    notes_filepath = os.path.join(NOTES_DIR, "research_log.txt")
+    with open(notes_filepath, "a", encoding="utf-8") as f:
+        f.write(f"\n\n{'='*50}\n{BRANDING_HEADER}\nResearch Topic: {topic} (at {timestamp})\n{'='*50}\n\n")
+        f.write(f"--- 📚 Wikipedia ---\n{wiki_summary}\n\n--- 🌐 DuckDuckGo ---\n{ddg_answer}\n\n--- 🤖 AI Summary & Analysis ---\n{ai_summary}\n\n{BRANDING_FOOTER}\n")
+    console.print(f"\n[bold green]✔ Results appended to [underline]{notes_filepath}[/underline][/bold green]")
+
 
 def run_chat_mode():
-    """Initiates a continuous chat session with the AI."""
-    console.print(Panel("You are now chatting with the AI. Type [bold]'exit'[/bold] or [bold]'quit'[/bold] to end.", title="[bold cyan]💬 AI Chat Mode[/bold cyan]"))
+    console.print(Panel("Chat with the AI. Type [bold]'exit'[/bold] or [bold]'quit'[/bold] to end and save the conversation.", title="[bold cyan]💬 AI Chat Mode[/bold cyan]"))
+    chat_history = []
     while True:
         prompt = Prompt.ask("[bold]You[/bold]")
         if prompt.lower() in ["exit", "quit"]:
             break
+        chat_history.append(f"**You:** {prompt}")
         payload = {"mode": "chat", "provider": "openai-gpt4o", "prompt": prompt}
         response = call_api(payload)
-        if response and "response" in response:
-            console.print(Panel(Markdown(response["response"]), title="[bold]AI[/bold]", border_style="cyan"))
-        else:
-            console.print("[bold red]Error: Could not get a response.[/bold red]")
+        ai_response = "Error: Could not get a response."
+        if response and response.get("success"):
+            ai_response = response.get("data", {}).get("response", ai_response)
+        
+        console.print(Panel(Markdown(ai_response), title="[bold]AI[/bold]", border_style="cyan"))
+        chat_history.append(f"**AI:**\n{ai_response}\n\n---\n")
+
+    if chat_history:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"chat_{timestamp}.md"
+        filepath = os.path.join(CHAT_DIR, filename)
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(f"# Chat Session: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n")
+            f.write(f"{BRANDING_HEADER}\n\n")
+            f.write("\n".join(chat_history))
+            f.write(f"\n\n{BRANDING_FOOTER}\n")
+        console.print(f"\n[bold green]✔ Chat history saved to [underline]{filepath}[/underline][/bold green]")
 
 def run_code_mode():
-    """Generates code based on a user's request."""
     console.print(Panel("Describe the code you want (e.g., 'a Python function for bubble sort').", title="[bold yellow]💻 Code Generation[/bold yellow]"))
     prompt = Prompt.ask("[bold]Request[/bold]")
     payload = {"mode": "code", "prompt": prompt}
     response = call_api(payload, spinner_text="Generating code...")
 
-    if response and "response" in response:
-        code = response["response"].strip()
+    if response and response.get("success"):
+        code = response.get("data", {}).get("response", "# Code generation failed.").strip()
         if code.startswith("```") and code.endswith("```"):
             code = '\n'.join(code.split('\n')[1:-1])
 
         console.print(Panel(Syntax(code, "python", theme="monokai", line_numbers=True), title="Generated Code"))
 
         if Confirm.ask("\n[bold]Do you want to save this code?[/bold]"):
-            os.makedirs(CODE_DIR, exist_ok=True)
-            filename = Prompt.ask("[bold]Enter filename[/bold]", default="script.py")
+            safe_name = get_safe_filename(prompt)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{timestamp}_{safe_name}.py"
             filepath = os.path.join(CODE_DIR, filename)
             with open(filepath, "w", encoding="utf-8") as f:
-                f.write(f"# {BRANDING_HEADER}\n# Code generated for prompt: {prompt}\n\n{code}\n\n# {BRANDING_FOOTER}\n")
-            console.print(f"[bold green]✔ Code saved to [underline]{os.path.abspath(filepath)}[/underline][/bold green]")
+                f.write(f"# {BRANDING_HEADER}\n# Code for prompt: {prompt}\n\n{code}\n\n# {BRANDING_FOOTER}\n")
+            console.print(f"[bold green]✔ Code saved to [underline]{filepath}[/underline][/bold green]")
+    else:
+        console.print("[bold red]Error: Could not generate code.[/bold red]")
+
 
 def run_image_mode():
-    """Generates an image from a text prompt."""
     console.print(Panel("Describe the image you want to create.", title="[bold blue]🎨 Image Generation[/bold blue]"))
     prompt = Prompt.ask("[bold]Description[/bold]")
     payload = {"mode": "image", "provider": "openai", "prompt": prompt, "width": 1024, "height": 1024}
-    response_data = call_api(payload, spinner_text="Creating your masterpiece...")
+    api_response = call_api(payload, spinner_text="Creating your masterpiece...")
 
-    if response_data and isinstance(response_data, dict) and "image_base64" in response_data:
+    if api_response and api_response.get("success"):
+        image_url = api_response.get("data", {}).get("url")
+        if not image_url:
+            console.print("[bold red]Error: API returned success but no image URL was found.[/bold red]")
+            return
+        
         try:
-            with console.status("[bold green]Saving image...[/bold green]", spinner="bouncingBar"):
-                image_data = base64.b64decode(response_data["image_base64"])
-                with open(IMAGE_FILE, "wb") as f:
-                    f.write(image_data)
-            console.print(f"\n[bold green]✅ Image saved successfully![/bold green]")
-            console.print(f"   [dim]Location: {IMAGE_FILE}[/dim]")
-        except Exception as e:
-            console.print(f"[bold red]Error saving image: {e}[/bold red]")
+            with console.status("[bold blue]Downloading image...[/bold blue]", spinner="bouncingBar"):
+                image_data = requests.get(image_url, timeout=60).content
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_name = get_safe_filename(prompt)
+            filename = f"{timestamp}_{safe_name}.png"
+            filepath = os.path.join(IMAGE_DIR, filename)
+
+            with open(filepath, "wb") as f:
+                f.write(image_data)
+            
+            console.print(f"\n[bold green]✅ Image downloaded and saved successfully![/bold green]")
+            console.print(f"   [dim]You can find it in your gallery or at:[/] [underline]{filepath}[/underline]")
+        except requests.exceptions.RequestException as e:
+            console.print(f"[bold red]Error downloading image: {e}[/bold red]")
+            console.print(f"[dim]Direct URL: {image_url}[/dim]")
     else:
-        console.print("[bold red]Error: Failed to generate image.[/bold red]")
+        console.print("[bold red]Error: Failed to generate image from API.[/bold red]")
 
 def run_voice_mode():
-    """Converts text to speech."""
     console.print(Panel("Enter the text to convert to speech.", title="[bold red]🔊 Text-to-Voice[/bold red]"))
     prompt = Prompt.ask("[bold]Text[/bold]")
     payload = {"mode": "voice", "voice": "nova", "prompt": prompt}
@@ -226,37 +230,32 @@ def run_voice_mode():
 
     if audio_data and isinstance(audio_data, bytes):
         try:
-            with open(AUDIO_FILE, "wb") as f:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_name = get_safe_filename(prompt)
+            filename = f"{timestamp}_{safe_name}.mp3"
+            filepath = os.path.join(AUDIO_DIR, filename)
+
+            with open(filepath, "wb") as f:
                 f.write(audio_data)
-            console.print(f"\n[bold green]✅ Audio saved as [underline]{os.path.basename(AUDIO_FILE)}[/underline][/bold green]")
-            console.print(f"   [dim]Location: {AUDIO_FILE}[/dim]")
+            console.print(f"\n[bold green]✅ Audio saved successfully![/bold green]")
+            console.print(f"   [dim]Listen to it at:[/] [underline]{filepath}[/underline]")
         except Exception as e:
             console.print(f"[bold red]Error saving audio file: {e}[/bold red]")
     else:
-        console.print("[bold red]Error: Failed to generate audio.[/bold red]")
+        console.print("[bold red]Error: Failed to generate audio data.[/bold red]")
 
 # --- 🚀 Main Application Logic ---
-
 def main():
-    """The main function to run the application loop."""
+    setup_environment()
     while True:
         clear_screen()
         print_header()
-        if IS_TERMUX:
-            console.print(f"[dim]Working directory: {os.getcwd()}[/dim]")
         print_menu()
         choice = Prompt.ask("Enter your choice", choices=["1", "2", "3", "4", "5", "6"], default="1")
-
         clear_screen()
         print_header()
-
-        actions = {
-            '1': run_research_mode,
-            '2': run_chat_mode,
-            '3': run_code_mode,
-            '4': run_image_mode,
-            '5': run_voice_mode,
-        }
+        
+        actions = {'1': run_research_mode, '2': run_chat_mode, '3': run_code_mode, '4': run_image_mode, '5': run_voice_mode}
         
         if choice in actions:
             actions[choice]()
