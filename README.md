@@ -1,5 +1,7 @@
 # Faizan's Research & AI Assistant (for Termux)
 
+A Research Tool By FAIZAN AHMAD KHICHI including image generator, chatbot, Text to speech and more.
+
 ![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![Termux](https://img.shields.io/badge/Termux-000000?style=for-the-badge&logo=termux&logoColor=white)
 ![API](https://img.shields.io/badge/API-Cloudflare-orange?style=for-the-badge)
@@ -36,13 +38,12 @@ Follow these steps to get the tool up and running on your Android device via Ter
 
 3.  **Clone the Repository:**
     ```bash
-    git clone https://github.com/YOUR_USERNAME/Termux-AI-Assistant.git
+    git clone https://github.com/Faizan-khichi/research.git
     ```
-    *(Replace `YOUR_USERNAME` with your actual GitHub username)*
 
 4.  **Navigate into the Project Directory:**
     ```bash
-    cd Termux-AI-Assistant
+    cd research
     ```
 
 5.  **Install Python Dependencies:**
@@ -56,7 +57,7 @@ To run the tool from anywhere in Termux with a simple command (`research`), crea
 
 1.  **Run this command in Termux:**
     ```bash
-    echo "alias research='python ~/Termux-AI-Assistant/research_tool.py'" >> ~/.bashrc
+    echo "alias research='python ~/research/research_tool.py'" >> ~/.bashrc
     ```
 
 2.  **Activate the alias:** Close and reopen Termux, or run:
